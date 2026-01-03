@@ -1,0 +1,169 @@
+# Docker Compose para Laboratorio de Redes con Scapy
+# ====================================================
+# Este archivo configura un entorno de laboratorio con múltiples hosts
+# en una red privada para experimentar con protocolos de red.
+
+services:
+  # ============================================
+  # HOST A - Emisor de paquetes
+  # ============================================
+  host_a:
+    build: .
+    container_name: lab_host_a
+    hostname: host-a
+
+    # Privilegios necesarios para manipular paquetes raw
+    cap_add:
+      - NET_ADMIN # Administración de interfaces de red
+      - NET_RAW # Envío/recepción de paquetes raw
+
+    # Configuración de red
+    networks:
+      lab_network:
+        ipv4_address: 192.168.100.10
+
+    # Dirección MAC fija (opcional pero útil para el laboratorio)
+    mac_address: "02:42:ac:11:00:10"
+
+    # Montar scripts (para desarrollo en vivo)
+    volumes:
+      - ./:/lab
+      - ./capturas:/capturas # Carpeta para guardar capturas
+
+    # Variables de entorno
+    environment:
+      - HOST_NAME=HOST_A
+      - HOST_ROLE=sender
+
+    # Mantener contenedor activo
+    tty: true
+    stdin_open: true
+
+    # Comando por defecto
+    command: /bin/bash
+
+  # ============================================
+  # HOST B - Receptor de paquetes
+  # ============================================
+  host_b:
+    build: .
+    container_name: lab_host_b
+    hostname: host-b
+
+    # Privilegios necesarios
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Configuración de red
+    networks:
+      lab_network:
+        ipv4_address: 192.168.100.20
+
+    # Dirección MAC fija
+    mac_address: "02:42:ac:11:00:20"
+
+    # Montar scripts
+    volumes:
+      - ./:/lab
+      - ./capturas:/capturas
+
+    # Variables de entorno
+    environment:
+      - HOST_NAME=HOST_B
+      - HOST_ROLE=receiver
+
+    # Mantener contenedor activo
+    tty: true
+    stdin_open: true
+
+    command: /bin/bash
+
+  # ============================================
+  # HOST C - Host adicional (opcional)
+  # ============================================
+  host_c:
+    build: .
+    container_name: lab_host_c
+    hostname: host-c
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    networks:
+      lab_network:
+        ipv4_address: 192.168.100.30
+
+    mac_address: "02:42:ac:11:00:30"
+
+    volumes:
+      - ./:/lab
+      - ./capturas:/capturas
+
+    environment:
+      - HOST_NAME=HOST_C
+      - HOST_ROLE=observer
+
+    tty: true
+    stdin_open: true
+
+    command: /bin/bash
+
+  # ============================================
+  # MONITOR - Contenedor para captura de tráfico
+  # ============================================
+  monitor:
+    build: .
+    container_name: lab_monitor
+    hostname: monitor
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    networks:
+      lab_network:
+        ipv4_address: 192.168.100.100
+
+    volumes:
+      - ./:/lab
+      - ./capturas:/capturas
+
+    environment:
+      - HOST_NAME=MONITOR
+      - HOST_ROLE=monitor
+
+    tty: true
+    stdin_open: true
+
+    # Iniciar tcpdump automáticamente (comentar si no se desea)
+    # command: tcpdump -i eth0 -w /capturas/trafico.pcap
+    command: /bin/bash
+
+# ============================================
+# CONFIGURACIÓN DE RED
+# ============================================
+networks:
+  lab_network:
+    name: scapy_lab_network
+    driver: bridge
+
+    # Configuración de la red
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.100.0/24
+          gateway: 192.168.100.1
+
+    # Opciones adicionales
+    driver_opts:
+      com.docker.network.bridge.name: br-scapy-lab
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+# ============================================
+# VOLÚMENES PERSISTENTES
+# ============================================
+volumes:
+  capturas:
+    name: scapy_lab_capturas
