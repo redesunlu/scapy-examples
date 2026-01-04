@@ -291,15 +291,49 @@ def procesar_paquete(pkt):
         except Exception as e:
             print(f"  (No se pudo decodificar como HTTP: {e})")
         
-        # Responder con ACK
-        print(f"\n[5/7 ENVIANDO: ACK]")
-        ack = enviar_respuesta(pkt, "A")
-        print(f"  → ACK enviado [ACK={ack[TCP].ack}]")
-        print(f"  ✓ Datos HTTP recibidos y confirmados!")
+        # =====================================================================
+        # RESPUESTA HTTP: Hola Mundo
+        # =====================================================================
+        # Construimos una respuesta HTTP mínima que quepa en un solo paquete TCP.
+        # El MSS típico es 1460 bytes, así que tenemos espacio de sobra.
+        #
+        # Estructura de respuesta HTTP:
+        # 1. Status Line: HTTP/1.1 200 OK
+        # 2. Headers: Content-Type, Content-Length, Connection
+        # 3. Línea vacía (separa headers del body)
+        # 4. Body: HTML
+        # =====================================================================
+        
+        html_body = "<html><body><h1>Hola Mundo!</h1></body></html>"
+        
+        http_response = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html; charset=utf-8\r\n"
+            f"Content-Length: {len(html_body)}\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            f"{html_body}"
+        )
+        
+        print(f"\n[5/7 ENVIANDO: PSH-ACK (HTTP RESPONSE)]")
+        print(f"  Respuesta HTTP ({len(http_response)} bytes):")
+        print(f"  ┌{'─' * 50}")
+        for linea in http_response.split('\r\n')[:4]:
+            print(f"  │ {linea}")
+        print(f"  │ ...")
+        print(f"  │ {html_body}")
+        print(f"  └{'─' * 50}")
+        
+        # Enviar respuesta con PSH+ACK (datos + confirmación)
+        respuesta = enviar_respuesta(pkt, "PA", payload=http_response)
+        print(f"  → HTTP Response enviado [SEQ={respuesta[TCP].seq}, ACK={respuesta[TCP].ack}]")
+        print(f"  ✓ Datos HTTP enviados al cliente!")
         
         if conn_id in conexiones:
-            conexiones[conn_id]['ack'] = ack[TCP].ack
-    
+            conexiones[conn_id]['ack'] = respuesta[TCP].ack
+            # Actualizar seq del servidor para el próximo paquete
+            conexiones[conn_id]['seq'] = respuesta[TCP].seq + len(http_response)
+
     # ===== CIERRE: FIN+ACK =====
     elif "F" in str(pkt[TCP].flags):
         mostrar_paquete(pkt, "6/7 RECIBIDO: FIN-ACK")
