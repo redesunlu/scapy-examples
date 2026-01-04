@@ -41,6 +41,10 @@ services:
       - HOST_NAME=HOST_A
       - HOST_ROLE=sender
 
+    # Deshabilitar mDNS/DNS multicast
+    dns: 8.8.8.8
+    dns_search: ""
+
     # Mantener contenedor activo
     tty: true
     stdin_open: true
@@ -79,6 +83,10 @@ services:
       - HOST_NAME=HOST_B
       - HOST_ROLE=receiver
 
+    # Deshabilitar mDNS/DNS multicast
+    dns: 8.8.8.8
+    dns_search: ""
+
     # Mantener contenedor activo
     tty: true
     stdin_open: true
@@ -110,6 +118,10 @@ services:
     environment:
       - HOST_NAME=HOST_C
       - HOST_ROLE=observer
+
+    # Deshabilitar mDNS/DNS multicast
+    dns: 8.8.8.8
+    dns_search: ""
 
     tty: true
     stdin_open: true
