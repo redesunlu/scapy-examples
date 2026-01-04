@@ -127,29 +127,42 @@ def enviar_respuesta(pkt, tcp_flags, payload=None, server_seq=None):
         pkt: Paquete recibido
         tcp_flags: Flags TCP para la respuesta
         payload: Datos opcionales
-        server_seq: Número de secuencia del servidor (para SYN-ACK)
+        server_seq: Número de secuencia del servidor (para control manual)
     """
     # Intercambiar origen y destino
     eth = Ether(src=pkt[Ether].dst, dst=pkt[Ether].src)
     ip = IP(src=pkt[IP].dst, dst=pkt[IP].src, ttl=64)
     
-    # Para SYN-ACK necesitamos un seq inicial aleatorio
-    if tcp_flags == "SA":
-        if server_seq is None:
-            server_seq = 0  # Número de secuencia inicial del servidor
-        seq_num = server_seq
-        ack_num = pkt[TCP].seq + 1  # ACK del SYN del cliente
-    else:
-        # Para otros paquetes, usar el esquema normal
-        seq_num = pkt[TCP].ack
-        payload_len = len(pkt[TCP].payload) if pkt[TCP].payload else 0
-        # Solo sumar 1 si hay flags especiales (SYN o FIN)
-        if "S" in str(pkt[TCP].flags) or "F" in str(pkt[TCP].flags):
-            ack_num = pkt[TCP].seq + payload_len + 1
-        else:
-            ack_num = pkt[TCP].seq + payload_len if payload_len > 0 else pkt[TCP].seq
+    # Identificador de conexión (desde la perspectiva del servidor)
+    conn_id = (pkt[IP].src, pkt[TCP].sport, pkt[IP].dst, pkt[TCP].dport)
     
-    # Intercambiar puertos y ajustar seq/ack
+    # Calcular números de secuencia y ACK según el tipo de paquete
+    if tcp_flags == "SA":
+        # SYN-ACK: Usamos seq inicial del servidor, ACK = cliente_seq + 1
+        if server_seq is None:
+            server_seq = 0
+        seq_num = server_seq
+        ack_num = pkt[TCP].seq + 1
+    else:
+        # Para otros paquetes: usar el estado guardado de la conexión
+        if conn_id in conexiones:
+            seq_num = conexiones[conn_id]['seq']
+        else:
+            seq_num = pkt[TCP].ack
+        
+        # Calcular ACK basado en lo que recibimos
+        payload_len = len(bytes(pkt[TCP].payload)) if pkt[TCP].payload else 0
+        
+        if "F" in str(pkt[TCP].flags):
+            # FIN consume 1 número de secuencia
+            ack_num = pkt[TCP].seq + payload_len + 1
+        elif payload_len > 0:
+            # Datos: ACK = seq + longitud de datos
+            ack_num = pkt[TCP].seq + payload_len
+        else:
+            # ACK simple
+            ack_num = pkt[TCP].seq
+    
     tcp = TCP(
         sport=pkt[TCP].dport,
         dport=pkt[TCP].sport,
@@ -224,17 +237,19 @@ def procesar_paquete(pkt):
         mostrar_paquete(pkt, "1/7 RECIBIDO: SYN")
         
         # Generar número de secuencia inicial del servidor
-        server_seq_inicial = 0  # Podría ser random.randint(1000, 10000)
+        server_seq_inicial = 0  # Podría ser random.randint(0, 4294967295)
         
         # Responder con SYN-ACK
         print(f"\n[2/7 ENVIANDO: SYN-ACK]")
         syn_ack = enviar_respuesta(pkt, "SA", server_seq=server_seq_inicial)
         print(f"  → SYN-ACK enviado [SEQ={syn_ack[TCP].seq}, ACK={syn_ack[TCP].ack}]")
         
-        # Guardar estado de conexión con el SEQ correcto
+        # Guardar estado de conexión
+        # IMPORTANTE: Después del SYN-ACK, nuestro próximo SEQ es seq_inicial + 1
+        # porque SYN consume 1 número de secuencia
         conexiones[conn_id] = {
-            'seq': syn_ack[TCP].seq + 1,  # Próximo seq del servidor
-            'ack': syn_ack[TCP].ack,       # Lo que esperamos del cliente
+            'seq': server_seq_inicial + 1,  # SYN consume 1 seq
+            'ack': syn_ack[TCP].ack,
             'estado': 'SYN_RECEIVED'
         }
     
@@ -330,9 +345,11 @@ def procesar_paquete(pkt):
         print(f"  ✓ Datos HTTP enviados al cliente!")
         
         if conn_id in conexiones:
+            # Actualizar ACK (lo que esperamos del cliente)
             conexiones[conn_id]['ack'] = respuesta[TCP].ack
-            # Actualizar seq del servidor para el próximo paquete
+            # Actualizar SEQ: nuestro seq actual + bytes enviados
             conexiones[conn_id]['seq'] = respuesta[TCP].seq + len(http_response)
+            conexiones[conn_id]['estado'] = 'DATA_SENT'
 
     # ===== CIERRE: FIN+ACK =====
     elif "F" in str(pkt[TCP].flags):
