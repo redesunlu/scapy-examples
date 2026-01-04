@@ -91,11 +91,33 @@ docker exec -it lab_host_a bash
 # Acceder a Host B (en otra terminal)
 docker exec -it lab_host_b bash
 
-# Acceder al Monitor (en otra terminal)
-docker exec -it lab_monitor bash
+# Acceder a Host C (opcional, en otra terminal)
+docker exec -it lab_host_c bash
 ```
 
-### 4. Ejecutar los scripts
+### 4. Capturar tráfico desde el host
+
+**Método recomendado**: Usar el script `capturar_trafico.sh` desde tu máquina (fuera de Docker):
+
+```bash
+# En una terminal separada, desde el directorio del proyecto
+./capturar_trafico.sh              # Guardará con timestamp
+./capturar_trafico.sh ethernet     # Guardará como capturas/ethernet.pcap
+./capturar_trafico.sh mi_prueba    # Guardará como capturas/mi_prueba.pcap
+```
+
+Este script captura **todo el tráfico** entre los contenedores desde el bridge Docker (`br-scapy-lab`), permitiendo ver la comunicación completa entre hosts.
+
+**Método alternativo** (captura manual):
+```bash
+# Capturar todo el tráfico del bridge
+sudo tcpdump -i br-scapy-lab -w capturas/trafico.pcap -v
+
+# O con tshark
+sudo tshark -i br-scapy-lab -w capturas/trafico.pcap
+```
+
+### 5. Ejecutar los scripts
 
 **En Host B (terminal 1)**:
 ```bash
@@ -112,18 +134,19 @@ python3 ethernet_host_B.py
 python3 ethernet_host_A.py
 ```
 
-### 5. Capturar tráfico
+### 6. Analizar capturas
 
-**En Monitor (terminal 3)**:
 ```bash
-# Capturar con tcpdump
-tcpdump -i eth0 -w /capturas/trafico.pcap
+# Detener la captura con Ctrl+C
 
-# O usar tshark
-tshark -i eth0
+# Ver con tcpdump
+tcpdump -r capturas/ethernet.pcap -A
+
+# O abrir con Wireshark
+wireshark capturas/ethernet.pcap
 ```
 
-### 6. Detener el laboratorio
+### 7. Detener el laboratorio
 
 ```bash
 # Detener contenedores
@@ -138,8 +161,7 @@ docker compose down -v
 ```
 ┌─────────────────────────────────────────────┐
 │         Red: 192.168.100.0/24               │
-│         (br-scapy-lab)                      │
-├─────────────────────────────────────────────┤
+│         Bridge: br-scapy-lab                │
 │                                             │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
 │  │ Host A   │  │ Host B   │  │ Host C   │  │
@@ -147,14 +169,17 @@ docker compose down -v
 │  │ Sender   │  │ Receiver │  │ Optional │  │
 │  └──────────┘  └──────────┘  └──────────┘  │
 │                                             │
-│           ┌──────────┐                      │
-│           │ Monitor  │                      │
-│           │ .100     │                      │
-│           │ Capture  │                      │
-│           └──────────┘                      │
-│                                             │
 └─────────────────────────────────────────────┘
+           ↓ Captura desde el host
+    ┌─────────────────┐
+    │ br-scapy-lab    │
+    │ (Docker Bridge) │
+    └─────────────────┘
+           ↓
+    capturar_trrafico.sh
 ```
+
+**Ventaja de capturar desde el host**: El bridge Docker (`br-scapy-lab`) ve **todo** el tráfico entre contenedores, a diferencia de capturar desde dentro de un contenedor donde solo se ve el tráfico destinado a ese contenedor específico.
 
 ## Configuración del Entorno Docker
 
@@ -165,7 +190,6 @@ docker compose down -v
 | Host A  | 192.168.100.10| 02:42:ac:11:00:10 | Emisor     |
 | Host B  | 192.168.100.20| 02:42:ac:11:00:20 | Receptor   |
 | Host C  | 192.168.100.30| 02:42:ac:11:00:30 | Opcional   |
-| Monitor | 192.168.100.100| Auto             | Capturador |
 
 ### Scripts Pre-configurados para Docker
 
@@ -194,17 +218,20 @@ ip_destino = "192.168.100.20"        # IP de Host B
 **Pasos**:
 
 ```bash
-# Terminal 1: Host B (receptor)
+# Terminal 1: Iniciar captura desde el host
+./capturar_trafico.sh ethernet
+
+# Terminal 2: Host B (receptor)
 docker exec -it lab_host_b bash
 python3 ethernet_host_B.py
 
-# Terminal 2: Host A (emisor)
+# Terminal 3: Host A (emisor)
 docker exec -it lab_host_a bash
 python3 ethernet_host_A.py
 
-# Terminal 3: Monitor (captura)
-docker exec -it lab_monitor bash
-tcpdump -i eth0 -e -vvv  # Ver detalles de Ethernet
+# Detener captura (Ctrl+C en terminal 1)
+# Analizar
+wireshark capturas/ethernet.pcap
 ```
 
 **Análisis**:
@@ -220,17 +247,19 @@ tcpdump -i eth0 -e -vvv  # Ver detalles de Ethernet
 **Pasos**:
 
 ```bash
-# Terminal 1: Host B
+# Terminal 1: Captura
+./capturar_trafico.sh ip
+
+# Terminal 2: Host B
 docker exec -it lab_host_b bash
 python3 ip_host_B.py
 
-# Terminal 2: Host A
+# Terminal 3: Host A
 docker exec -it lab_host_a bash
 python3 ip_host_A.py
 
-# Terminal 3: Monitor
-docker exec -it lab_monitor bash
-tshark -i eth0 -Y "ip.addr == 192.168.100.10"
+# Analizar con tshark o Wireshark
+tshark -r capturas/ip.pcap -Y "ip.addr == 192.168.100.10"
 ```
 
 **Análisis**:
@@ -246,17 +275,19 @@ tshark -i eth0 -Y "ip.addr == 192.168.100.10"
 **Pasos**:
 
 ```bash
-# Terminal 1: Host B
+# Terminal 1: Captura
+./capturar_trafico.sh http
+
+# Terminal 2: Host B
 docker exec -it lab_host_b bash
 python3 http_host_B.py
 
-# Terminal 2: Host A
+# Terminal 3: Host A
 docker exec -it lab_host_a bash
 python3 http_host_A.py
 
-# Terminal 3: Monitor - Guardar captura
-docker exec -it lab_monitor bash
-tcpdump -i eth0 -w /capturas/http_captura.pcap port 80
+# Analizar
+wireshark capturas/http.pcap
 ```
 
 **Análisis**:
@@ -266,17 +297,70 @@ tcpdump -i eth0 -w /capturas/http_captura.pcap port 80
 - Leer los headers HTTP (Host, User-Agent, etc.)
 - Usar "Follow TCP Stream" en Wireshark
 
-### Ejercicio 4: Análisis de Capturas
+### Ejercicio 4: Análisis Comparativo
 
 ```bash
-# Desde el host (fuera de Docker)
-# Las capturas están en ./capturas/
+# Capturar múltiples escenarios
+./capturar_trafico.sh escenario1
+# ... ejecutar scripts ...
 
-# Ver con tcpdump
-tcpdump -r capturas/http_captura.pcap -A
+./capturar_trafico.sh escenario2
+# ... ejecutar scripts con cambios ...
 
-# O abrir con Wireshark
-wireshark capturas/http_captura.pcap
+# Comparar capturas
+tcpdump -r capturas/escenario1.pcap -A > escenario1.txt
+tcpdump -r capturas/escenario2.pcap -A > escenario2.txt
+diff escenario1.txt escenario2.txt
+```
+
+## Script de Captura: capturar_trafico.sh
+
+### Uso
+
+```bash
+# Sintaxis
+./capturar_trafico.sh [nombre_archivo]
+
+# Ejemplos
+./capturar_trrafico.sh                    # Guarda con timestamp automático
+./capturar_trafico.sh ethernet           # Guarda como capturas/ethernet.pcap
+./capturar_trafico.sh prueba_tcp         # Guarda como capturas/prueba_tcp.pcap
+./capturar_trafico.sh laboratorio_http   # Guarda como capturas/laboratorio_http.pcap
+```
+
+### Características
+
+- ✅ Captura desde el bridge Docker (ve todo el tráfico)
+- ✅ Verifica que el bridge exista antes de capturar
+- ✅ Crea el directorio `capturas/` automáticamente
+- ✅ Permite nombre personalizado o usa timestamp
+- ✅ Muestra comandos útiles para análisis posterior
+- ✅ Requiere `sudo` (solo para captura, no afecta contenedores)
+
+### Salida del Script
+
+```bash
+$ ./capturar_trafico.sh mi_captura
+==========================================
+CAPTURA DE TRÁFICO DEL LABORATORIO
+==========================================
+Bridge:      br-scapy-lab
+Archivo:     capturas/mi_captura.pcap
+Directorio:  /Users/usuario/scapy-examples/capturas
+
+Capturando tráfico... (Ctrl+C para detener)
+
+tcpdump: listening on br-scapy-lab, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+^C15 packets captured
+15 packets received by filter
+0 packets dropped by kernel
+
+✓ Captura guardada en: capturas/mi_captura.pcap
+
+Para analizar el archivo:
+  tcpdump -r capturas/mi_captura.pcap
+  tshark -r capturas/mi_captura.pcap
+  wireshark capturas/mi_captura.pcap
 ```
 
 ## Actividades Sugeridas para Estudiantes
@@ -337,6 +421,9 @@ docker exec lab_host_a ip route
 
 # Probar conectividad
 docker exec lab_host_a ping -c 4 192.168.100.20
+
+# Ver el bridge desde el host
+ip link show br-scapy-lab
 ```
 
 ### Limpieza
@@ -357,7 +444,7 @@ docker system prune -a
 
 ## Ventajas del Entorno Docker
 
-✅ **No requiere sudo**: Docker gestiona los privilegios internamente  
+✅ **No requiere sudo**: Docker gestiona los privilegios internamente (excepto para captura en host)  
 ✅ **Aislamiento total**: No afecta la red del host  
 ✅ **Reproducible**: Mismo entorno en cualquier máquina  
 ✅ **MACs/IPs fijas**: Facilita los ejercicios de laboratorio  
@@ -365,6 +452,7 @@ docker system prune -a
 ✅ **Fácil reset**: `docker compose down && docker compose up -d`  
 ✅ **Capturas centralizadas**: Carpeta `./capturas` compartida  
 ✅ **Sin conflictos**: Cada estudiante puede tener su propio entorno  
+✅ **Visibilidad completa**: Captura desde el bridge ve todo el tráfico  
 
 ## Referencias
 
@@ -377,11 +465,20 @@ docker system prune -a
 
 ## Troubleshooting
 
-### Problema: No se puede capturar tráfico
+### Problema: Script de captura no encuentra el bridge
 
-**Solución**: Verificar que los contenedores tengan capacidades NET_ADMIN y NET_RAW:
+**Solución**: Verificar que los contenedores estén corriendo:
 ```bash
-docker inspect lab_host_a | grep -A 10 CapAdd
+docker compose ps
+docker network ls | grep scapy
+ip link show | grep br-scapy-lab  # En Linux/Mac
+```
+
+### Problema: No se puede capturar tráfico (permiso denegado)
+
+**Solución**: El script requiere `sudo` para capturar en el bridge:
+```bash
+sudo ./capturar_trafico.sh mi_captura
 ```
 
 ### Problema: No hay comunicación entre contenedores
@@ -400,14 +497,12 @@ docker exec lab_host_a ifconfig
 # Modificar scripts si es necesario
 ```
 
-### Problema: Capturas no se guardan
+### Problema: Capturas vacías o incompletas
 
-**Solución**: Crear carpeta de capturas:
-```bash
-mkdir -p capturas
-chmod 777 capturas
-docker compose restart
-```
+**Solución**: 
+1. Asegurarse de iniciar la captura **antes** de ejecutar los scripts
+2. Verificar que el bridge esté activo: `ip link show br-scapy-lab`
+3. Usar el script `capturar_trafico.sh` en lugar de capturar manualmente
 
 ### Problema: Contenedores no inician
 
@@ -461,10 +556,11 @@ tc qdisc add dev eth0 root netem loss 10%
 
 1. **Pre-construir imágenes**: Distribuir imágenes Docker pre-construidas para ahorrar tiempo
 2. **Docker Hub**: Subir la imagen a Docker Hub para fácil distribución
-3. **Scripts automatizados**: Usar `start_lab.sh` y `stop_lab.sh` para gestionar el entorno
-4. **Jupyter Notebooks**: Integrar con Jupyter para análisis interactivo
-5. **CI/CD**: Usar GitHub Actions para validar scripts automáticamente
-6. **Capturas pre-generadas**: Proporcionar archivos .pcap de ejemplo para análisis offline
+3. **Scripts automatizados**: El script `capturar_trafico.sh` simplifica la captura para estudiantes
+4. **Capturas pre-generadas**: Proporcionar archivos .pcap de ejemplo para análisis offline
+5. **Nomenclatura consistente**: Usar nombres descriptivos para capturas (ethernet.pcap, tcp.pcap, etc.)
+6. **Jupyter Notebooks**: Integrar con Jupyter para análisis interactivo
+7. **CI/CD**: Usar GitHub Actions para validar scripts automáticamente
 
 ## Notas Importantes
 
@@ -474,8 +570,9 @@ tc qdisc add dev eth0 root netem loss 10%
 
 3. **Portabilidad**: Los scripts y configuraciones funcionan igual en cualquier sistema operativo con Docker instalado.
 
-4. **Capturas Compartidas**: El directorio `./capturas` es compartido entre el host y los contenedores, facilitando el análisis.
+4. **Capturas Compartidas**: El directorio `./capturas` es accesible tanto desde el host como desde los contenedores.
 
+5. **Permisos de Captura**: Solo la captura desde el host (usando `capturar_trafico.sh`) requiere `sudo`. Los scripts dentro de los contenedores no lo necesitan.
 
 ## Licencia
 

@@ -2,6 +2,12 @@
 # ====================================================
 # Este archivo configura un entorno de laboratorio con múltiples hosts
 # en una red privada para experimentar con protocolos de red.
+#
+# CAPTURA DE TRÁFICO:
+# Para monitorear todo el tráfico entre contenedores, ejecutar desde el host:
+#   sudo tcpdump -i br-scapy-lab -w capturas/trafico.pcap -v
+# O con tshark:
+#   sudo tshark -i br-scapy-lab -w capturas/trafico.pcap
 
 services:
   # ============================================
@@ -110,37 +116,6 @@ services:
 
     command: /bin/bash
 
-  # ============================================
-  # MONITOR - Contenedor para captura de tráfico
-  # ============================================
-  monitor:
-    build: .
-    container_name: lab_monitor
-    hostname: monitor
-
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-
-    networks:
-      lab_network:
-        ipv4_address: 192.168.100.100
-
-    volumes:
-      - ./:/lab
-      - ./capturas:/capturas
-
-    environment:
-      - HOST_NAME=MONITOR
-      - HOST_ROLE=monitor
-
-    tty: true
-    stdin_open: true
-
-    # Iniciar tcpdump automáticamente (comentar si no se desea)
-    # command: tcpdump -i eth0 -w /capturas/trafico.pcap
-    command: /bin/bash
-
 # ============================================
 # CONFIGURACIÓN DE RED
 # ============================================
@@ -156,10 +131,11 @@ networks:
         - subnet: 192.168.100.0/24
           gateway: 192.168.100.1
 
-    # Opciones adicionales
+    # Opciones adicionales del bridge
     driver_opts:
       com.docker.network.bridge.name: br-scapy-lab
       com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.enable_icc: "true" # Inter-Container Communication
 
 # ============================================
 # VOLÚMENES PERSISTENTES
