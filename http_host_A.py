@@ -228,26 +228,53 @@ def enviar_request_http(puerto_origen):
     print(f"    → Tamaño payload: {len(http_request)} bytes")
     
     # ===== PASO 5: ENVIAR Y ESPERAR ACK =====
-    print(f"\n[5/7] Esperando ACK del servidor...")
+    print(f"\n[5/7] Esperando respuesta HTTP del servidor...")
     
     # Usamos srp1() nuevamente para enviar datos HTTP y esperar confirmación.
     # El servidor debe responder con un ACK confirmando la recepción.
     pkt = srp1(http_pkt, iface=interfaz, timeout=5, verbose=False)
 
+    # Guardar el ACK actualizado después de recibir datos del servidor
     if pkt and TCP in pkt:
-        print(f"    ← ACK recibido del servidor")
-        print(f"    ✓ Datos HTTP confirmados!")
+        # Calcular cuántos bytes envió el servidor
+        payload_len = len(bytes(pkt[TCP].payload)) if pkt[TCP].payload else 0
+        
+        # Actualizar nuestro ACK: seq del servidor + bytes recibidos
+        # Si el servidor envió datos (PSH-ACK), debemos confirmarlos
+        if payload_len > 0:
+            nuevo_ack = pkt[TCP].seq + payload_len
+            print(f"    ← Respuesta HTTP recibida ({payload_len} bytes)")
+            print(f"    ✓ Datos HTTP confirmados!")
+            
+            # Mostrar la respuesta HTTP
+            try:
+                http_response = bytes(pkt[TCP].payload).decode('utf-8', errors='ignore')
+                print(f"\n    [RESPUESTA HTTP]")
+                print(f"    {'─' * 40}")
+                for linea in http_response.split('\r\n')[:5]:
+                    print(f"    {linea}")
+                print(f"    {'─' * 40}")
+            except:
+                pass
+        else:
+            # Solo ACK sin datos
+            nuevo_ack = server_seq + 1
+            print(f"    ← ACK recibido del servidor")
+            print(f"    ✓ Datos HTTP confirmados!")
     else:
-        print(f"    ✗ No se recibió ACK (continuando...)")
+        print(f"    ✗ No se recibió respuesta (continuando...)")
+        nuevo_ack = server_seq + 1
     
     # ===== PASO 6: ENVIAR FIN-ACK =====
     print(f"\n[6/7] Enviando FIN-ACK (cerrar conexión)...")
     
+    # IMPORTANTE: El SEQ debe reflejar los bytes que enviamos (HTTP request)
+    # El ACK debe reflejar los bytes que recibimos (HTTP response)
     tcp_fin = TCP(
         sport=puerto_origen,
         dport=puerto_destino,
-        seq=server_ack + len(http_request),
-        ack=server_seq + 1,
+        seq=server_ack + len(http_request),  # Nuestro seq inicial + bytes enviados
+        ack=nuevo_ack,                        # ACK actualizado con bytes recibidos
         flags="FA",
         window=8192
     )
@@ -260,7 +287,7 @@ def enviar_request_http(puerto_origen):
     # srp1() envía nuestro FIN-ACK y espera el FIN-ACK del servidor.
     # Esto inicia el cierre ordenado de la conexión TCP (4-way handshake).
     pkt = srp1(fin_pkt, iface=interfaz, timeout=5, verbose=False)
-    print(f"    → FIN-ACK enviado")
+    print(f"    → FIN-ACK enviado [SEQ={tcp_fin.seq}, ACK={tcp_fin.ack}]")
     
     if pkt is None:
         print(f"    ✗ No se recibió FIN-ACK (timeout)")
