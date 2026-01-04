@@ -14,14 +14,74 @@ Analiza y muestra todas las capas del modelo OSI/TCP-IP:
 - Capa 4 (TCP): handshake, puertos, flags, números de secuencia, ventana
 - Capa 7 (HTTP): método, URI, versión, headers, body
 
+NOTA TÉCNICA: Problema del RST
+===============================
+Cuando usamos Scapy para manejar TCP manualmente, el kernel del sistema operativo
+también ve los paquetes que llegan. Como NO hay un programa real escuchando en
+el puerto 80, el kernel automáticamente envía un paquete RST (Reset) para
+rechazar la conexión.
+
+Solución: Usar iptables para bloquear los paquetes RST que envía el kernel.
+Esto permite que Scapy maneje toda la comunicación TCP sin interferencia.
+
 Ideal para que los estudiantes comprendan el flujo TCP completo
 y puedan comparar la salida del script con lo que ven en Wireshark.
 """
 
 from scapy.all import Ether, IP, TCP, Raw, sendp, sniff, conf
 import sys
+import subprocess
 
 conf.verb = 0  # Reducir verbosidad
+
+def configurar_iptables(puerto=80):
+    """
+    Configura iptables para bloquear paquetes RST del kernel.
+    
+    ¿Por qué necesitamos esto?
+    - El kernel ve el paquete SYN que llega al puerto 80
+    - Como no hay un servidor real (solo Scapy), envía RST
+    - Bloqueamos ese RST para que Scapy maneje todo
+    """
+    print(f"[*] Configurando iptables para bloquear RST en puerto {puerto}...")
+    
+    try:
+        cmd = [
+            "iptables", "-A", "OUTPUT",
+            "-p", "tcp",
+            "--tcp-flags", "RST", "RST",
+            "--sport", str(puerto),
+            "-j", "DROP"
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        print(f"    ✓ Regla iptables aplicada")
+        print(f"    ✓ El kernel ya NO enviará RST")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"    ✗ Error al configurar iptables")
+        print(f"    [TIP] Ejecuta con sudo: sudo python3 http_host_B.py")
+        return False
+    except FileNotFoundError:
+        print(f"    ✗ iptables no encontrado en el sistema")
+        return False
+
+def limpiar_iptables(puerto=80):
+    """
+    Elimina la regla de iptables al finalizar el script.
+    """
+    print(f"\n[*] Limpiando regla de iptables...")
+    try:
+        cmd = [
+            "iptables", "-D", "OUTPUT",
+            "-p", "tcp",
+            "--tcp-flags", "RST", "RST",
+            "--sport", str(puerto),
+            "-j", "DROP"
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        print(f"    ✓ Regla eliminada")
+    except:
+        pass
 
 # Diccionario para mantener estado de conexiones
 conexiones = {}
@@ -225,10 +285,16 @@ def servidor_http():
     interfaz = "eth0"
     puerto = 80
     
+    # IMPORTANTE: Configurar iptables ANTES de empezar
+    if not configurar_iptables(puerto):
+        print("\n[ERROR] No se pudo configurar iptables.")
+        print("        Este script requiere permisos de root.")
+        return
+    
     print(f"\n[*] Configuración:")
     print(f"    - Interfaz: {interfaz}")
     print(f"    - Puerto: {puerto}")
-    print(f"    - Protocolo: HTTP sobre TCP")
+    print(f"    - Protocolo: HTTP sobre TCP (Scapy manual)")
     
     print(f"\n[*] Servidor escuchando en puerto {puerto}...")
     print("[*] Esperando conexiones TCP...")
@@ -246,11 +312,16 @@ def servidor_http():
         sys.exit(1)
 
 if __name__ == "__main__":
-    print("\n[INFO] Este script implementa un servidor TCP/HTTP básico")
-    print("       que responde al handshake y muestra todas las capas.\n")
+    print("\n[INFO] Este script implementa un servidor TCP/HTTP básico usando Scapy")
+    print("       para manejar manualmente el protocolo TCP.\n")
+    
+    print("[IMPORTANTE] Requiere permisos de root para:")
+    print("             1. Capturar paquetes con Scapy")
+    print("             2. Configurar regla de iptables")
+    print("             Ejecuta: sudo python3 http_host_B.py\n")
     
     print("[INFO] Guía para el laboratorio:")
-    print("       1. Iniciar este script en Host B: python3 http_host_B.py")
+    print("       1. Iniciar este script en Host B: sudo python3 http_host_B.py")
     print("       2. Abrir Wireshark/tcpdump en el Monitor")
     print("       3. Aplicar filtro: tcp.port == 80")
     print("       4. Ejecutar http_host_A.py en Host A")
@@ -265,4 +336,7 @@ if __name__ == "__main__":
         servidor_http()
     except KeyboardInterrupt:
         print("\n\n[*] Servidor detenido por el usuario.")
+    finally:
+        limpiar_iptables()
+        print("[*] Limpieza completada. Adiós!")
         sys.exit(0)

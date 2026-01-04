@@ -26,14 +26,66 @@ cómo se establece y cierra una conexión TCP.
 """
 
 from scapy.all import Ether, IP, TCP, Raw, sendp, sniff, conf
-import sys
 import random
+import sys
+import subprocess
 
 conf.verb = 0  # Reducir verbosidad de Scapy
 
-def enviar_request_http():
+def configurar_iptables(puerto):
+    """
+    Configura iptables para bloquear paquetes RST del kernel en el puerto del cliente.
+    
+    ¿Por qué necesitamos esto?
+    - Cuando el servidor responde SYN-ACK, el kernel del cliente también lo ve
+    - Como no hay un socket real en ese puerto, el kernel envía RST
+    - Bloqueamos ese RST para que Scapy maneje todo
+    """
+    print(f"[*] Configurando iptables para bloquear RST en puerto {puerto}...")
+    
+    try:
+        cmd = [
+            "iptables", "-A", "OUTPUT",
+            "-p", "tcp",
+            "--tcp-flags", "RST", "RST",
+            "--sport", str(puerto),
+            "-j", "DROP"
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        print(f"    ✓ Regla iptables aplicada\n")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"    ✗ Error al configurar iptables")
+        print(f"    [TIP] Ejecuta con sudo: sudo python3 http_host_A.py")
+        return False
+    except FileNotFoundError:
+        print(f"    ✗ iptables no encontrado")
+        return False
+
+def limpiar_iptables(puerto):
+    """
+    Elimina la regla de iptables al finalizar.
+    """
+    print(f"\n[*] Limpiando regla de iptables...")
+    try:
+        cmd = [
+            "iptables", "-D", "OUTPUT",
+            "-p", "tcp",
+            "--tcp-flags", "RST", "RST",
+            "--sport", str(puerto),
+            "-j", "DROP"
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        print(f"    ✓ Regla eliminada")
+    except:
+        pass
+
+def enviar_request_http(puerto_origen):
     """
     Establece conexión TCP, envía HTTP request, y cierra conexión.
+    
+    Args:
+        puerto_origen: Puerto TCP del cliente (ya configurado en iptables)
     """
     
     print("=" * 80)
@@ -51,7 +103,6 @@ def enviar_request_http():
     ip_destino = "192.168.100.20"        # IP de Host B
     
     # Capa 4 - TCP
-    puerto_origen = random.randint(50000, 60000)  # Puerto aleatorio del cliente
     puerto_destino = 80                  # Puerto HTTP estándar
     
     # Interfaz de red
@@ -65,20 +116,20 @@ def enviar_request_http():
     print(f"    - MAC Origen: {mac_origen} → MAC Destino: {mac_destino}")
     print(f"    - IP Origen: {ip_origen} → IP Destino: {ip_destino}")
     print(f"    - Puerto Origen: {puerto_origen} → Puerto Destino: {puerto_destino}")
-    print(f"    - SEQ inicial: {seq_inicial}")
+    print(f"    - SEQ inicial: {seq_inicial}\n")
     
     # Capas base que se reutilizarán
     eth = Ether(src=mac_origen, dst=mac_destino)
     ip = IP(src=ip_origen, dst=ip_destino, ttl=64)
     
     # ===== PASO 1: ENVIAR SYN (Cliente inicia conexión) =====
-    print(f"\n[1/7] Enviando SYN (iniciar handshake)...")
+    print(f"[1/7] Enviando SYN (iniciar handshake)...")
     
     tcp_syn = TCP(
         sport=puerto_origen,
         dport=puerto_destino,
         seq=seq_inicial,
-        flags="S",  # SYN flag
+        flags="S",
         window=8192,
         options=[('MSS', 1460)]
     )
@@ -90,26 +141,26 @@ def enviar_request_http():
     # ===== PASO 2: ESPERAR SYN-ACK del servidor =====
     print(f"[2/7] Esperando SYN-ACK del servidor...")
     
-    def es_syn_ack(pkt):
-        return (TCP in pkt and 
-                pkt[TCP].sport == puerto_destino and 
-                pkt[TCP].dport == puerto_origen and
-                pkt[TCP].flags == "SA")
-    
-    syn_ack_pkt = sniff(
-        filter=f"tcp and src host {ip_destino} and dst host {ip_origen}",
+    paquetes = sniff(
+        filter=f"tcp and src {ip_destino} and dst {ip_origen} and src port {puerto_destino} and dst port {puerto_origen}",
         iface=interfaz,
-        lfilter=es_syn_ack,
         count=1,
         timeout=5
     )
     
-    if not syn_ack_pkt:
-        print("    ✗ ERROR: No se recibió SYN-ACK. Asegúrate de que Host B esté ejecutando.")
-        sys.exit(1)
+    if not paquetes:
+        print(f"    ✗ No se recibió respuesta del servidor (timeout)")
+        return
     
-    server_seq = syn_ack_pkt[0][TCP].seq
-    server_ack = syn_ack_pkt[0][TCP].ack
+    pkt = paquetes[0]
+    
+    # Verificar que sea SYN-ACK
+    if not (TCP in pkt and pkt[TCP].flags.S and pkt[TCP].flags.A):
+        print(f"    ✗ Se recibió un paquete pero no es SYN-ACK: {pkt.summary()}")
+        return
+    
+    server_seq = pkt[TCP].seq
+    server_ack = pkt[TCP].ack
     print(f"    ← SYN-ACK recibido [SEQ={server_seq}, ACK={server_ack}]")
     
     # ===== PASO 3: ENVIAR ACK (Completar handshake) =====
@@ -120,7 +171,7 @@ def enviar_request_http():
         dport=puerto_destino,
         seq=server_ack,
         ack=server_seq + 1,
-        flags="A",  # ACK flag
+        flags="A",
         window=8192
     )
     
@@ -147,93 +198,85 @@ def enviar_request_http():
         dport=puerto_destino,
         seq=server_ack,
         ack=server_seq + 1,
-        flags="PA",  # PSH + ACK flags
+        flags="PA",
         window=8192
     )
     
     http_pkt = eth / ip / tcp_psh / Raw(load=http_request)
     sendp(http_pkt, iface=interfaz, verbose=False)
-    print(f"    → HTTP GET enviado [SEQ={server_ack}, ACK={server_seq + 1}]")
-    print(f"    → Tamaño payload: {len(http_request)} bytes")
     
-    # Actualizar seq number para siguiente paquete
-    client_seq = server_ack + len(http_request)
+    print(f"    → HTTP GET Request enviado:")
+    print(f"       {http_request.split(chr(13))[0]}")
+    print(f"       [SEQ={server_ack}, ACK={server_seq + 1}]")
+    print(f"    → Tamaño payload: {len(http_request)} bytes")
+
     
     # ===== PASO 5: ESPERAR ACK del servidor =====
-    print(f"[5/7] Esperando ACK del servidor...")
+    print(f"\n[5/7] Esperando ACK del servidor...")
     
-    def es_ack_datos(pkt):
-        return (TCP in pkt and 
-                pkt[TCP].sport == puerto_destino and 
-                pkt[TCP].dport == puerto_origen and
-                "A" in str(pkt[TCP].flags))
-    
-    data_ack_pkt = sniff(
-        filter=f"tcp and src host {ip_destino} and dst host {ip_origen}",
+    paquetes = sniff(
+        filter=f"tcp and src {ip_destino} and dst {ip_origen} and src port {puerto_destino} and dst port {puerto_origen}",
         iface=interfaz,
-        lfilter=es_ack_datos,
         count=1,
         timeout=5
     )
     
-    if data_ack_pkt:
-        print(f"    ← ACK recibido [ACK={data_ack_pkt[0][TCP].ack}]")
-        print(f"    ✓ Datos HTTP recibidos por el servidor!")
+    if paquetes and TCP in paquetes[0]:
+        print(f"    ← ACK recibido del servidor")
+        print(f"    ✓ Datos HTTP confirmados!")
     
-    # ===== PASO 6: ENVIAR FIN (Cerrar conexión) =====
-    print(f"\n[6/7] Enviando FIN (cerrar conexión)...")
+    # ===== PASO 6: ENVIAR FIN-ACK (Cerrar conexión) =====
+    print(f"\n[6/7] Enviando FIN-ACK (cerrar conexión)...")
     
     tcp_fin = TCP(
         sport=puerto_origen,
         dport=puerto_destino,
-        seq=client_seq,
+        seq=server_ack + len(http_request),
         ack=server_seq + 1,
-        flags="FA",  # FIN + ACK flags
+        flags="FA",
         window=8192
     )
     
     fin_pkt = eth / ip / tcp_fin
     sendp(fin_pkt, iface=interfaz, verbose=False)
-    print(f"    → FIN-ACK enviado [SEQ={client_seq}]")
+    print(f"    → FIN-ACK enviado")
     
     # ===== PASO 7: ESPERAR FIN-ACK del servidor =====
     print(f"[7/7] Esperando FIN-ACK del servidor...")
     
-    def es_fin_ack(pkt):
-        return (TCP in pkt and 
-                pkt[TCP].sport == puerto_destino and 
-                pkt[TCP].dport == puerto_origen and
-                "F" in str(pkt[TCP].flags))
-    
-    fin_ack_pkt = sniff(
-        filter=f"tcp and src host {ip_destino} and dst host {ip_origen}",
+    paquetes = sniff(
+        filter=f"tcp and src {ip_destino} and dst {ip_origen} and src port {puerto_destino} and dst port {puerto_origen}",
         iface=interfaz,
-        lfilter=es_fin_ack,
         count=1,
         timeout=5
     )
     
-    if fin_ack_pkt:
-        server_fin_seq = fin_ack_pkt[0][TCP].seq
-        print(f"    ← FIN-ACK recibido [SEQ={server_fin_seq}]")
+    if not paquetes:
+        print(f"    ✗ No se recibió FIN-ACK (timeout)")
+        return
+    
+    fin_pkt = paquetes[0]
+    
+    if TCP in fin_pkt and fin_pkt[TCP].flags.F:
+        print(f"    ← FIN-ACK recibido del servidor")
         
         # Enviar ACK final
-        tcp_final_ack = TCP(
+        final_ack = TCP(
             sport=puerto_origen,
             dport=puerto_destino,
-            seq=client_seq + 1,
-            ack=server_fin_seq + 1,
+            seq=fin_pkt[TCP].ack,
+            ack=fin_pkt[TCP].seq + 1,
             flags="A",
             window=8192
         )
         
-        final_ack_pkt = eth / ip / tcp_final_ack
-        sendp(final_ack_pkt, iface=interfaz, verbose=False)
-        print(f"    → ACK final enviado [ACK={server_fin_seq + 1}]")
-        print(f"    ✓ Conexión TCP cerrada correctamente!")
+        final_pkt = eth / ip / final_ack
+        sendp(final_pkt, iface=interfaz, verbose=False)
+        print(f"    → ACK final enviado")
+        print(f"    ✓ Conexión cerrada correctamente!")
     
-    # ===== RESUMEN =====
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
+    print("REQUEST HTTP COMPLETADO EXITOSAMENTE")
     print("RESUMEN DEL FLUJO TCP/HTTP")
     print("=" * 80)
     print(f"""
@@ -268,13 +311,35 @@ def enviar_request_http():
     print("=" * 80)
 
 if __name__ == "__main__":
+    print("\n[INFO] Este script envía un request HTTP completo con handshake TCP")
+    print("       manejado manualmente con Scapy.\n")
+    
+    print("[IMPORTANTE] Requiere permisos de root para:")
+    print("             1. Enviar paquetes raw con Scapy")
+    print("             2. Configurar regla de iptables")
+    print("             Ejecuta: sudo python3 http_host_A.py\n")
+    
+    puerto = None
     try:
-        enviar_request_http()
+        # Generar puerto aleatorio
+        puerto = random.randint(50000, 60000)
+        
+        # Configurar iptables ANTES de enviar paquetes
+        if not configurar_iptables(puerto):
+            print("\n[ERROR] No se pudo configurar iptables.")
+            sys.exit(1)
+        
+        # Enviar el request HTTP usando el mismo puerto
+        enviar_request_http(puerto)
+        
     except KeyboardInterrupt:
-        print("\n\n[*] Proceso interrumpido por el usuario.")
-        sys.exit(0)
+        print("\n\n[*] Script interrumpido por el usuario.")
     except Exception as e:
-        print(f"\n[ERROR] Error: {e}")
+        print(f"\n[ERROR] Error inesperado: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+    finally:
+        # SIEMPRE limpiar iptables
+        if puerto:
+            limpiar_iptables(puerto)
+        sys.exit(0)

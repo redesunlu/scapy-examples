@@ -1,7 +1,7 @@
 # Dockerfile para entorno de laboratorio de redes con Scapy
 # ========================================================
-# Imagen base con Python 3.11
-FROM python:3.11-slim
+# Imagen base con Python 3 (última versión estable)
+FROM python:3-slim
 
 # Metadata
 LABEL maintainer="Labredes - UNLu"
@@ -20,6 +20,8 @@ RUN apt-get update && apt-get install -y \
     tcpdump \
     # Tshark para captura de paquetes (Wireshark CLI)
     tshark \
+    # iptables para control de firewall y bloqueo de RST
+    iptables \
     # Editor de texto simple
     nano \
     vim \
@@ -68,10 +70,12 @@ RUN echo '#!/bin/bash\n\
     echo "  - ping <host>       : Probar conectividad"\n\
     echo "  - tcpdump           : Capturar paquetes"\n\
     echo "  - tshark            : Wireshark en línea de comandos"\n\
+    echo "  - iptables          : Configurar reglas de firewall"\n\
     echo ""\n\
     echo "Ejemplos de captura:"\n\
     echo "  tcpdump -i eth0 -n"\n\
     echo "  tshark -i eth0"\n\
+    echo "  iptables -L -v -n"\n\
     echo ""\n\
     echo "================================================="\n\
     ' > /usr/local/bin/help.sh && chmod +x /usr/local/bin/help.sh
