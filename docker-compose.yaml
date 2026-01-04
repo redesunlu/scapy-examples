@@ -8,6 +8,19 @@
 #   sudo tcpdump -i br-scapy-lab -w capturas/trafico.pcap -v
 # O con tshark:
 #   sudo tshark -i br-scapy-lab -w capturas/trafico.pcap
+#
+# MODOS DE RED:
+# =============
+# 1. RED AISLADA (para capturas limpias sin mDNS):
+#    - internal: true
+#    - Los contenedores NO tienen acceso a internet
+#    - Ideal para laboratorio y capturas
+#
+# 2. RED CON INTERNET (para instalar paquetes):
+#    - internal: false
+#    - enable_ip_masquerade: "true"
+#    - Los contenedores SÍ tienen acceso a internet
+#    - Puede haber tráfico mDNS del host en las capturas
 
 services:
   # ============================================
@@ -136,18 +149,31 @@ networks:
     name: scapy_lab_network
     driver: bridge
 
-    # Configuración de la red
+    # ==========================================
+    # OPCIÓN 1: Red aislada (capturas limpias)
+    # ==========================================
+    # Descomentar estas líneas para red sin internet:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: br-scapy-lab
+      com.docker.network.bridge.enable_icc: "true"
+
+    # ==========================================
+    # OPCIÓN 2: Red con internet
+    # ==========================================
+    # Descomentar estas líneas para red con internet:
+    # internal: false
+    # driver_opts:
+    #   com.docker.network.bridge.name: br-scapy-lab
+    #   com.docker.network.bridge.enable_icc: "true"
+    #   com.docker.network.bridge.enable_ip_masquerade: "true"
+
+    # Configuración de la red (igual para ambas opciones)
     ipam:
       driver: default
       config:
         - subnet: 192.168.100.0/24
           gateway: 192.168.100.1
-
-    # Opciones adicionales del bridge
-    driver_opts:
-      com.docker.network.bridge.name: br-scapy-lab
-      com.docker.network.bridge.enable_ip_masquerade: "true"
-      com.docker.network.bridge.enable_icc: "true" # Inter-Container Communication
 
 # ============================================
 # VOLÚMENES PERSISTENTES
