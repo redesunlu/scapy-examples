@@ -38,12 +38,13 @@ echo "=========================================="
 echo "Bridge:      $BRIDGE"
 echo "Archivo:     $OUTPUT"
 echo "Directorio:  $(pwd)/$CAPTURE_DIR"
+echo "Filtro:      Excluyendo mDNS (puerto 5353)"
 echo ""
 echo "Capturando tráfico... (Ctrl+C para detener)"
 echo ""
 
-# Ejecutar tcpdump
-sudo tcpdump -i "$BRIDGE" -w "$OUTPUT" -v
+# Ejecutar tcpdump excluyendo mDNS (puerto 5353)
+sudo tcpdump -i "$BRIDGE" -w "$OUTPUT" -v 'not port 5353'
 
 echo ""
 echo "✓ Captura guardada en: $OUTPUT"
