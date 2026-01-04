@@ -359,9 +359,10 @@ def servidor_http():
     print("[*] Presionar Ctrl+C para detener\n")
     
     try:
+        # Filtra paquetes HACIA el puerto 80 (hacia nosotros)
         sniff(
             prn=procesar_paquete,
-            filter=f"tcp port {puerto}",
+            filter=f"tcp dst port {puerto}",
             iface=interfaz,
             store=0
         )
