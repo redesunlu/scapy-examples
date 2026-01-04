@@ -141,8 +141,9 @@ def enviar_request_http(puerto_origen):
     # ===== PASO 2: ESPERAR SYN-ACK del servidor =====
     print(f"[2/7] Esperando SYN-ACK del servidor...")
     
+    # Usar filtro BPF más simple
     paquetes = sniff(
-        filter=f"tcp and src {ip_destino} and dst {ip_origen} and src port {puerto_destino} and dst port {puerto_origen}",
+        filter=f"tcp dst port {puerto_origen}",
         iface=interfaz,
         count=1,
         timeout=5
@@ -154,9 +155,18 @@ def enviar_request_http(puerto_origen):
     
     pkt = paquetes[0]
     
-    # Verificar que sea SYN-ACK
-    if not (TCP in pkt and pkt[TCP].flags.S and pkt[TCP].flags.A):
-        print(f"    ✗ Se recibió un paquete pero no es SYN-ACK: {pkt.summary()}")
+    # Verificar manualmente que sea del servidor correcto y sea SYN-ACK
+    if not (IP in pkt and TCP in pkt):
+        print(f"    ✗ Paquete inválido recibido")
+        return
+        
+    if pkt[IP].src != ip_destino or pkt[TCP].sport != puerto_destino:
+        print(f"    ✗ Paquete de origen incorrecto")
+        return
+    
+    if not (pkt[TCP].flags.S and pkt[TCP].flags.A):
+        print(f"    ✗ Se recibió un paquete pero no es SYN-ACK")
+        print(f"    [DEBUG] Flags: {pkt[TCP].flags}")
         return
     
     server_seq = pkt[TCP].seq
@@ -184,7 +194,7 @@ def enviar_request_http(puerto_origen):
     print(f"\n[4/7] Enviando HTTP Request...")
     
     http_request = (
-        "GET /index.html HTTP/1.1\r\n"
+        "GET / HTTP/1.1\r\n"
         f"Host: {ip_destino}\r\n"
         "User-Agent: Scapy-Lab-Client/1.0\r\n"
         "Accept: text/html,application/xhtml+xml\r\n"
@@ -210,12 +220,14 @@ def enviar_request_http(puerto_origen):
     print(f"       [SEQ={server_ack}, ACK={server_seq + 1}]")
     print(f"    → Tamaño payload: {len(http_request)} bytes")
 
+    print(f"    → Tamaño payload: {len(http_request)} bytes")
+
     
     # ===== PASO 5: ESPERAR ACK del servidor =====
     print(f"\n[5/7] Esperando ACK del servidor...")
     
     paquetes = sniff(
-        filter=f"tcp and src {ip_destino} and dst {ip_origen} and src port {puerto_destino} and dst port {puerto_origen}",
+        filter=f"tcp dst port {puerto_origen}",
         iface=interfaz,
         count=1,
         timeout=5
@@ -245,7 +257,7 @@ def enviar_request_http(puerto_origen):
     print(f"[7/7] Esperando FIN-ACK del servidor...")
     
     paquetes = sniff(
-        filter=f"tcp and src {ip_destino} and dst {ip_origen} and src port {puerto_destino} and dst port {puerto_origen}",
+        filter=f"tcp dst port {puerto_origen}",
         iface=interfaz,
         count=1,
         timeout=5

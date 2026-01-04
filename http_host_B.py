@@ -31,6 +31,7 @@ y puedan comparar la salida del script con lo que ven en Wireshark.
 from scapy.all import Ether, IP, TCP, Raw, sendp, sniff, conf
 import sys
 import subprocess
+import random
 
 conf.verb = 0  # Reducir verbosidad
 
@@ -86,20 +87,42 @@ def limpiar_iptables(puerto=80):
 # Diccionario para mantener estado de conexiones
 conexiones = {}
 
-def enviar_respuesta(pkt, tcp_flags, payload=None):
+def enviar_respuesta(pkt, tcp_flags, payload=None, server_seq=None):
     """
     Envía una respuesta TCP al cliente.
+    
+    Args:
+        pkt: Paquete recibido
+        tcp_flags: Flags TCP para la respuesta
+        payload: Datos opcionales
+        server_seq: Número de secuencia del servidor (para SYN-ACK)
     """
     # Intercambiar origen y destino
     eth = Ether(src=pkt[Ether].dst, dst=pkt[Ether].src)
     ip = IP(src=pkt[IP].dst, dst=pkt[IP].src, ttl=64)
     
+    # Para SYN-ACK necesitamos un seq inicial aleatorio
+    if tcp_flags == "SA":
+        if server_seq is None:
+            server_seq = 0  # Número de secuencia inicial del servidor
+        seq_num = server_seq
+        ack_num = pkt[TCP].seq + 1  # ACK del SYN del cliente
+    else:
+        # Para otros paquetes, usar el esquema normal
+        seq_num = pkt[TCP].ack
+        payload_len = len(pkt[TCP].payload) if pkt[TCP].payload else 0
+        # Solo sumar 1 si hay flags especiales (SYN o FIN)
+        if "S" in str(pkt[TCP].flags) or "F" in str(pkt[TCP].flags):
+            ack_num = pkt[TCP].seq + payload_len + 1
+        else:
+            ack_num = pkt[TCP].seq + payload_len if payload_len > 0 else pkt[TCP].seq
+    
     # Intercambiar puertos y ajustar seq/ack
     tcp = TCP(
         sport=pkt[TCP].dport,
         dport=pkt[TCP].sport,
-        seq=pkt[TCP].ack,
-        ack=pkt[TCP].seq + (len(pkt[TCP].payload) if pkt[TCP].payload else 1),
+        seq=seq_num,
+        ack=ack_num,
         flags=tcp_flags,
         window=8192
     )
@@ -168,15 +191,18 @@ def procesar_paquete(pkt):
         print("=" * 80)
         mostrar_paquete(pkt, "1/7 RECIBIDO: SYN")
         
+        # Generar número de secuencia inicial del servidor
+        server_seq_inicial = 0  # Podría ser random.randint(1000, 10000)
+        
         # Responder con SYN-ACK
         print(f"\n[2/7 ENVIANDO: SYN-ACK]")
-        syn_ack = enviar_respuesta(pkt, "SA")
+        syn_ack = enviar_respuesta(pkt, "SA", server_seq=server_seq_inicial)
         print(f"  → SYN-ACK enviado [SEQ={syn_ack[TCP].seq}, ACK={syn_ack[TCP].ack}]")
         
-        # Guardar estado de conexión
+        # Guardar estado de conexión con el SEQ correcto
         conexiones[conn_id] = {
-            'seq': syn_ack[TCP].seq + 1,
-            'ack': syn_ack[TCP].ack,
+            'seq': syn_ack[TCP].seq + 1,  # Próximo seq del servidor
+            'ack': syn_ack[TCP].ack,       # Lo que esperamos del cliente
             'estado': 'SYN_RECEIVED'
         }
     
