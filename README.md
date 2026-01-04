@@ -1,5 +1,5 @@
 # Scapy-examples
-## Ejemplos prácticos de Fundamentos de Redes
+## Ejemplos prácticos de Fundamentos de Redes - Labredes UNLu
 
 Este repositorio contiene 3 pares de scripts Python que utilizan Scapy para generar tráfico de red a diferentes niveles del modelo OSI/TCP-IP. Son ideales para laboratorios de Fundamentos de Redes donde los estudiantes pueden capturar y analizar el tráfico con tcpdump/tshark o Wireshark.
 
