@@ -25,7 +25,7 @@ Los estudiantes pueden analizar con Wireshark el flujo TCP completo y ver
 cómo se establece y cierra una conexión TCP.
 """
 
-from scapy.all import Ether, IP, TCP, Raw, sendp, sniff, conf
+from scapy.all import Ether, IP, TCP, Raw, sendp, srp1, conf
 import random
 import sys
 import subprocess
@@ -122,7 +122,7 @@ def enviar_request_http(puerto_origen):
     eth = Ether(src=mac_origen, dst=mac_destino)
     ip = IP(src=ip_origen, dst=ip_destino, ttl=64)
     
-    # ===== PASO 1: ENVIAR SYN (Cliente inicia conexión) =====
+    # ===== PASO 1: ENVIAR SYN Y ESPERAR SYN-ACK =====
     print(f"[1/7] Enviando SYN (iniciar handshake)...")
     
     tcp_syn = TCP(
@@ -135,38 +135,47 @@ def enviar_request_http(puerto_origen):
     )
     
     syn_pkt = eth / ip / tcp_syn
-    sendp(syn_pkt, iface=interfaz, verbose=False)
-    print(f"    → SYN enviado [SEQ={seq_inicial}]")
     
-    # ===== PASO 2: ESPERAR SYN-ACK del servidor =====
+    # =========================================================================
+    # srp1() - Send and Receive at Layer 2, wait for 1 response
+    # =========================================================================
+    # srp1() es fundamental para evitar condiciones de carrera en TCP manual.
+    # 
+    # ¿Por qué NO usar sendp() + sniff() separados?
+    # - sendp() envía el paquete
+    # - sniff() inicia la captura DESPUÉS
+    # - El SYN-ACK puede llegar en ~20ms, antes de que sniff() esté listo
+    # - Resultado: timeout aunque el paquete sí llegó
+    #
+    # ¿Cómo funciona srp1()?
+    # 1. Primero INICIA el sniffer internamente (antes de enviar)
+    # 2. Luego ENVÍA el paquete
+    # 3. Espera UNA respuesta que coincida (matching)
+    # 4. Retorna el paquete de respuesta o None si hay timeout
+    #
+    # El "matching" en capa 2 (Ethernet) verifica:
+    # - MAC origen de respuesta == MAC destino del enviado
+    # - Para TCP: IP y puertos invertidos, flags apropiados
+    #
+    # Parámetros:
+    # - syn_pkt: paquete a enviar (debe incluir capa Ethernet para srp)
+    # - iface: interfaz de red
+    # - timeout: segundos máximos de espera
+    # - verbose: False para no mostrar mensajes de Scapy
+    # =========================================================================
+    print(f"    → SYN enviado [SEQ={seq_inicial}]")
     print(f"[2/7] Esperando SYN-ACK del servidor...")
     
-    # Usar filtro BPF más simple
-    paquetes = sniff(
-        filter=f"tcp dst port {puerto_origen}",
-        iface=interfaz,
-        count=1,
-        timeout=5
-    )
-    
-    if not paquetes:
+    pkt = srp1(syn_pkt, iface=interfaz, timeout=5, verbose=False)
+
+    if pkt is None:
         print(f"    ✗ No se recibió respuesta del servidor (timeout)")
         return
     
-    pkt = paquetes[0]
-    
-    # Verificar manualmente que sea del servidor correcto y sea SYN-ACK
-    if not (IP in pkt and TCP in pkt):
-        print(f"    ✗ Paquete inválido recibido")
-        return
-        
-    if pkt[IP].src != ip_destino or pkt[TCP].sport != puerto_destino:
-        print(f"    ✗ Paquete de origen incorrecto")
-        return
-    
-    if not (pkt[TCP].flags.S and pkt[TCP].flags.A):
+    # Verificar que sea SYN-ACK
+    if not (TCP in pkt and pkt[TCP].flags.S and pkt[TCP].flags.A):
         print(f"    ✗ Se recibió un paquete pero no es SYN-ACK")
-        print(f"    [DEBUG] Flags: {pkt[TCP].flags}")
+        print(f"    [DEBUG] Flags: {pkt[TCP].flags if TCP in pkt else 'N/A'}")
         return
     
     server_seq = pkt[TCP].seq
@@ -213,31 +222,25 @@ def enviar_request_http(puerto_origen):
     )
     
     http_pkt = eth / ip / tcp_psh / Raw(load=http_request)
-    sendp(http_pkt, iface=interfaz, verbose=False)
     
     print(f"    → HTTP GET Request enviado:")
     print(f"       {http_request.split(chr(13))[0]}")
-    print(f"       [SEQ={server_ack}, ACK={server_seq + 1}]")
     print(f"    → Tamaño payload: {len(http_request)} bytes")
-
-    print(f"    → Tamaño payload: {len(http_request)} bytes")
-
     
-    # ===== PASO 5: ESPERAR ACK del servidor =====
+    # ===== PASO 5: ENVIAR Y ESPERAR ACK =====
     print(f"\n[5/7] Esperando ACK del servidor...")
     
-    paquetes = sniff(
-        filter=f"tcp dst port {puerto_origen}",
-        iface=interfaz,
-        count=1,
-        timeout=5
-    )
-    
-    if paquetes and TCP in paquetes[0]:
+    # Usamos srp1() nuevamente para enviar datos HTTP y esperar confirmación.
+    # El servidor debe responder con un ACK confirmando la recepción.
+    pkt = srp1(http_pkt, iface=interfaz, timeout=5, verbose=False)
+
+    if pkt and TCP in pkt:
         print(f"    ← ACK recibido del servidor")
         print(f"    ✓ Datos HTTP confirmados!")
+    else:
+        print(f"    ✗ No se recibió ACK (continuando...)")
     
-    # ===== PASO 6: ENVIAR FIN-ACK (Cerrar conexión) =====
+    # ===== PASO 6: ENVIAR FIN-ACK =====
     print(f"\n[6/7] Enviando FIN-ACK (cerrar conexión)...")
     
     tcp_fin = TCP(
@@ -250,34 +253,26 @@ def enviar_request_http(puerto_origen):
     )
     
     fin_pkt = eth / ip / tcp_fin
-    sendp(fin_pkt, iface=interfaz, verbose=False)
-    print(f"    → FIN-ACK enviado")
     
-    # ===== PASO 7: ESPERAR FIN-ACK del servidor =====
+    # ===== PASO 7: ESPERAR FIN-ACK =====
     print(f"[7/7] Esperando FIN-ACK del servidor...")
     
-    paquetes = sniff(
-        filter=f"tcp dst port {puerto_origen}",
-        iface=interfaz,
-        count=1,
-        timeout=5
-    )
+    # srp1() envía nuestro FIN-ACK y espera el FIN-ACK del servidor.
+    # Esto inicia el cierre ordenado de la conexión TCP (4-way handshake).
+    pkt = srp1(fin_pkt, iface=interfaz, timeout=5, verbose=False)
+    print(f"    → FIN-ACK enviado")
     
-    if not paquetes:
+    if pkt is None:
         print(f"    ✗ No se recibió FIN-ACK (timeout)")
-        return
-    
-    fin_pkt = paquetes[0]
-    
-    if TCP in fin_pkt and fin_pkt[TCP].flags.F:
+    elif TCP in pkt and pkt[TCP].flags.F:
         print(f"    ← FIN-ACK recibido del servidor")
         
         # Enviar ACK final
         final_ack = TCP(
             sport=puerto_origen,
             dport=puerto_destino,
-            seq=fin_pkt[TCP].ack,
-            ack=fin_pkt[TCP].seq + 1,
+            seq=pkt[TCP].ack,
+            ack=pkt[TCP].seq + 1,
             flags="A",
             window=8192
         )

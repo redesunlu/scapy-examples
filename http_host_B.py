@@ -24,6 +24,38 @@ rechazar la conexión.
 Solución: Usar iptables para bloquear los paquetes RST que envía el kernel.
 Esto permite que Scapy maneje toda la comunicación TCP sin interferencia.
 
+NOTA TÉCNICA: ¿Por qué sniff() + sendp() y no srp1()?
+=====================================================
+El cliente (Host A) usa srp1() para evitar condiciones de carrera: envía un
+paquete y espera atómicamente la respuesta. Pero el servidor NO puede usar
+srp1() porque:
+
+1. DIFERENCIA DE ROLES:
+   - Cliente: INICIA la comunicación, sabe qué esperar y cuándo.
+   - Servidor: ESPERA conexiones, no sabe cuándo llegará un paquete.
+
+2. PATRÓN REACTIVO vs ACTIVO:
+   - Cliente (activo):    srp1(SYN) → espera SYN-ACK → srp1(ACK+datos) → ...
+   - Servidor (reactivo): sniff() [siempre escuchando] → procesa → sendp()
+
+3. SIN CONDICIÓN DE CARRERA EN EL SERVIDOR:
+   - sniff() ya está corriendo ANTES de que llegue cualquier paquete
+   - Cada paquete dispara el callback procesar_paquete()
+   - sendp() envía la respuesta (no necesita esperar nada)
+
+Flujo:
+    Host A (Cliente)              Host B (Servidor)
+         |                              |
+         |  srp1(SYN) ──────────────→  sniff() [ya escuchando]
+         |                              |
+         |  ←────────────── sendp(SYN-ACK)
+         |  [srp1 captura]              |
+         |                              |
+         |  srp1(ACK+HTTP) ─────────→  sniff() procesa
+         |                              |
+         |  ←────────────── sendp(ACK)
+         |  [srp1 captura]              |
+
 Ideal para que los estudiantes comprendan el flujo TCP completo
 y puedan comparar la salida del script con lo que ven en Wireshark.
 """
