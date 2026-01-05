@@ -95,8 +95,9 @@ docker exec -it lab_host_b bash
 docker exec -it lab_host_c bash
 ```
 
-### 4. Capturar tráfico desde el host
+### 4. Capturar tráfico
 
+#### Desde Linux
 **Método recomendado**: Usar el script `capturar_trafico.sh` desde tu máquina (fuera de Docker):
 
 ```bash
@@ -117,10 +118,28 @@ sudo tcpdump -i br-scapy-lab -w capturas/trafico.pcap -v
 sudo tshark -i br-scapy-lab -w capturas/trafico.pcap
 ```
 
+#### Desde MacOS / Windows
+
+**Creando un contenedor**
+```bash
+# Compartiendo el "cable" de lab_host_b
+docker run --name monitor \
+  --network container:lab_host_b \
+  --cap-add NET_ADMIN \
+  --cap-add NET_RAW \
+  -v "$PWD/capturas:/capturas" \
+  scapy-examples-host_b \
+  tcpdump -i eth0 -w /capturas/trafico.pcap -v
+
+# Detener desde otra terminal:
+docker stop monitor
+docker rm monitor
+```
+
 ### 5. Ejecutar los scripts
 
 **En Host B (terminal 1)**:
-```bash
+``````bash
 # Ver interfaz de red
 ifconfig eth0
 
@@ -163,11 +182,11 @@ docker compose down -v
 │         Red: 192.168.100.0/24               │
 │         Bridge: br-scapy-lab                │
 │                                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Host A   │  │ Host B   │  │ Host C   │  │
-│  │ .10      │  │ .20      │  │ .30      │  │
-│  │ Sender   │  │ Receiver │  │ Optional │  │
-│  └──────────┘  └──────────┘  └──────────┘  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │ Host A   │  │ Host B   │  │ Host C   │   │
+│  │ .10      │  │ .20      │  │ .30      │   │
+│  │ Sender   │  │ Receiver │  │ Optional │   │
+│  └──────────┘  └──────────┘  └──────────┘   │
 │                                             │
 └─────────────────────────────────────────────┘
            ↓ Captura desde el host
