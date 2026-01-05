@@ -139,7 +139,7 @@ docker rm monitor
 ### 5. Ejecutar los scripts
 
 **En Host B (terminal 1)**:
-``````bash
+```bash
 # Ver interfaz de red
 ifconfig eth0
 
@@ -189,7 +189,7 @@ docker compose down -v
 │  └──────────┘  └──────────┘  └──────────┘   │
 │                                             │
 └─────────────────────────────────────────────┘
-           ↓ Captura desde el host
+           ↓ Captura desde el host (Linux)
     ┌─────────────────┐
     │ br-scapy-lab    │
     │ (Docker Bridge) │
